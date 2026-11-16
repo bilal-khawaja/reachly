@@ -1,0 +1,28 @@
+[project]
+name = "outreach-crm"
+version = "0.1.0"
+description = "Outreach CRM backend (FastAPI + Postgres)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "psycopg2-binary>=2.9",
+    "python-dotenv>=1.0",
+    "pydantic[email]>=2.8",
+    "alembic>=1.13",
+    "sqlalchemy>=2.0",
+    "pyjwt>=2.15.1",
+    "bcrypt>=5.0.0",
+]
+
+[dependency-groups]
+export = ["pandas>=2.2", "openpyxl>=3.1"]
+dev = ["httpx>=0.27", "pytest>=8"]
+
+[tool.uv]
+package = false
+default-groups = ["export", "dev"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["backend"]

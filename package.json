@@ -1,0 +1,11 @@
+{
+  "name": "outreach-crm",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -n api,web \"just backend\" \"just client\""
+  },
+  "devDependencies": {
+    "concurrently": "^9.0.1"
+  }
+}
