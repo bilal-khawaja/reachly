@@ -22,7 +22,35 @@ async function req(method, url, body) {
   return res.status === 204 ? null : res.json();
 }
 
+async function upload(url, file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  const token = getToken();
+  const res = await fetch(url, { method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : {}, body: fd });
+  if (res.status === 401) { setToken(null); window.dispatchEvent(new Event('crm-logout')); }
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    const d = body?.detail;
+    throw new Error((typeof d === 'string' ? d : Array.isArray(d) ? d.map((x) => x.msg).join('; ') : null) || (res.status >= 500 ? 'Cannot reach the API. Start it with `just backend`.' : res.statusText));
+  }
+  return body;
+}
+
+async function downloadTemplate() {
+  const token = getToken();
+  const res = await fetch('/api/import/template', { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+  if (!res.ok) throw new Error('Could not download template');
+  const url = URL.createObjectURL(await res.blob());
+  const a = Object.assign(document.createElement('a'), { href: url, download: 'leads-template.csv' });
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export const api = {
+  importSpec: () => req('GET', '/api/import/spec'),
+  importTemplate: downloadTemplate,
+  importPreview: (file) => upload('/api/import/preview', file),
+  importCommit: (file) => upload('/api/import', file),
   login: (email, password) => req('POST', '/api/auth/login', { email, password }),
   signup: (email, password) => req('POST', '/api/auth/signup', { email, password }),
   list: (params = {}) => req('GET', '/api/businesses?' + new URLSearchParams(Object.entries(params).filter(([, v]) => v))),

@@ -1,16 +1,31 @@
 import { useEffect } from 'react';
 import { AlertCircle, CheckCircle2, X } from 'lucide-react';
+import { Alert as HeroAlert, CloseButton } from '@heroui/react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
-// Transient alert shown at top centre. notice: { type: 'success' | 'error' | 'warning', title, description } | null
+// Transient alert shown at top centre. notice: { type: 'success' | 'error' | 'warning' | 'deleted', title, description } | null
 export default function Notice({ notice, onClose }) {
   useEffect(() => {
     if (!notice) return;
-    const id = setTimeout(onClose, notice.type === 'success' ? 3500 : 6000);
+    const id = setTimeout(onClose, notice.type === 'success' || notice.type === 'deleted' ? 3500 : 6000);
     return () => clearTimeout(id);
   }, [notice, onClose]);
 
   if (!notice) return null;
+  if (notice.type === 'deleted') {
+    return (
+      <div className="pointer-events-none fixed inset-x-0 top-4 z-[60] flex justify-center px-4">
+        <HeroAlert status="success" role="status" className="pointer-events-auto w-full max-w-md shadow-lg">
+          <HeroAlert.Indicator />
+          <HeroAlert.Content>
+            <HeroAlert.Title>{notice.title}</HeroAlert.Title>
+            {notice.description && <HeroAlert.Description>{notice.description}</HeroAlert.Description>}
+          </HeroAlert.Content>
+          <CloseButton onPress={onClose} aria-label="Dismiss" />
+        </HeroAlert>
+      </div>
+    );
+  }
   const destructive = notice.type === 'error';
   const Icon = notice.type === 'success' ? CheckCircle2 : AlertCircle;
   return (

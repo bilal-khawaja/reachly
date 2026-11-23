@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Form, TextField, Label, Input, FieldError } from '@heroui/react';
 import { api, setToken } from './api.js';
 import { Button } from '@/components/ui/button';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import GridBackground from '@/components/GridBackground';
 import ThemeToggle from './ThemeToggle.jsx';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -47,6 +48,7 @@ export default function Login({ onLogin }) {
   }
 
   return (
+    <ScrollArea className="h-screen">
     <div className="relative grid min-h-screen place-items-center p-4 text-foreground">
       <GridBackground />
       <ThemeToggle className="absolute top-4 right-4" />
@@ -94,5 +96,6 @@ export default function Login({ onLogin }) {
         </Form>
       </Card>
     </div>
+    </ScrollArea>
   );
 }

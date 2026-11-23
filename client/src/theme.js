@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 const KEY = 'crm_theme';
+let fadeTimer;
 const mql = () => window.matchMedia('(prefers-color-scheme: dark)');
 
 function stored() {
@@ -30,6 +31,11 @@ export function useTheme() {
   }, []);
 
   const toggle = useCallback(() => {
+    // Suppress all transitions during the flip so the switch is instant.
+    const root = document.documentElement;
+    root.classList.add('theme-switching');
+    clearTimeout(fadeTimer);
+    fadeTimer = setTimeout(() => root.classList.remove('theme-switching'), 80);
     setTheme((t) => {
       const next = t === 'dark' ? 'light' : 'dark';
       try { localStorage.setItem(KEY, next); } catch { /* ignore */ }

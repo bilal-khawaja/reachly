@@ -1,10 +1,12 @@
 from datetime import datetime
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Response
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from psycopg2.extras import execute_values
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+import importer
 from auth import current_user, router as auth_router
 from db import cursor
 from validators import clean_email, clean_phone, clean_website
@@ -168,6 +170,86 @@ def delete_business(bid: int):
     with cursor() as cur:
         cur.execute("DELETE FROM businesses WHERE id=%s", (bid,))
     return Response(status_code=204)
+
+
+def _load_import(file: UploadFile):
+    """Parse + validate an uploaded file. Bad header -> 400; bad rows are reported, not raised."""
+    try:
+        _, raw_rows = importer.read_table(file.filename, file.file.read(importer.MAX_BYTES + 1))
+    except importer.ImportFormatError as e:
+        raise HTTPException(400, str(e))
+    with cursor() as cur:
+        cur.execute("SELECT lower(name) AS n, phone FROM businesses")
+        seen = {(r["n"], r["phone"]) for r in cur.fetchall()}
+
+    out = []
+    for rownum, raw in raw_rows:
+        raw = dict(raw)
+        raw["status"] = (raw.get("status") or "new").lower().replace(" ", "_")
+        raw["channel"] = (raw.get("channel") or "phone").lower()
+        errors, data, duplicate = [], None, False
+        if raw["channel"] not in importer.CHANNELS:
+            errors.append(f"channel: must be one of {', '.join(importer.CHANNELS)}")
+        try:
+            data = {k: blank_to_none(v) for k, v in BusinessIn(**raw).model_dump().items()}
+            if not data["name"]:
+                errors.append("name: required")
+        except ValidationError as e:
+            errors += [f"{err['loc'][-1]}: {str(err['msg']).replace('Value error, ', '')}" for err in e.errors()]
+        if data and not errors:
+            key = (data["name"].lower(), data["phone"])
+            duplicate = key in seen
+            seen.add(key)
+        out.append({"row": rownum, "data": data if not errors else raw, "errors": errors, "duplicate": duplicate})
+    return out
+
+
+@protected.get("/api/import/spec")
+def import_spec():
+    return {"columns": importer.COLUMNS, "max_rows": importer.MAX_ROWS, "max_mb": importer.MAX_BYTES // 1024 // 1024}
+
+
+@protected.get("/api/import/template")
+def import_template():
+    return Response(
+        importer.template_csv(),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="leads-template.csv"'},
+    )
+
+
+@protected.post("/api/import/preview")
+def import_preview(file: UploadFile):
+    rows = _load_import(file)
+    bad = [r for r in rows if r["errors"]]
+    return {
+        "total": len(rows),
+        "valid": sum(1 for r in rows if not r["errors"] and not r["duplicate"]),
+        "duplicates": sum(1 for r in rows if r["duplicate"]),
+        "invalid": len(bad),
+        "sample": [r for r in rows if not r["errors"]][:10],
+        "errors": [{"row": r["row"], "messages": r["errors"]} for r in bad[:100]],
+    }
+
+
+@protected.post("/api/import", status_code=201)
+def import_commit(file: UploadFile):
+    """Inserts valid, non-duplicate rows; skips the rest. Re-validates server-side."""
+    rows = _load_import(file)
+    good = [r["data"] for r in rows if not r["errors"] and not r["duplicate"]]
+    if good:
+        cols = list(good[0])
+        with cursor() as cur:
+            execute_values(
+                cur,
+                f"INSERT INTO businesses ({','.join(cols)}) VALUES %s",
+                [[d[c] for c in cols] for d in good],
+            )
+    return {
+        "imported": len(good),
+        "skipped_duplicates": sum(1 for r in rows if r["duplicate"]),
+        "skipped_invalid": sum(1 for r in rows if r["errors"]),
+    }
 
 
 @protected.get("/api/meetings")
