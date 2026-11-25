@@ -56,10 +56,10 @@ def test_update_validates_and_can_clear(client, auth):
 
 
 @pytest.mark.parametrize("col,val", [("email", "not-an-email"), ("website", "not a site")])
-def test_database_rejects_bad_values_directly(col, val):
+def test_database_rejects_bad_values_directly(user, col, val):
     with pytest.raises(psycopg2.errors.CheckViolation):
         with db.cursor() as cur:
-            cur.execute(f"INSERT INTO businesses (name, phone, {col}) VALUES ('x', '1', %s)", (val,))
+            cur.execute(f"INSERT INTO businesses (user_id, name, phone, {col}) VALUES ((SELECT id FROM users LIMIT 1), 'x', '1', %s)", (val,))
 
 
 def test_python_and_postgres_regex_agree():
@@ -83,15 +83,15 @@ def test_phone_trimmed_and_update_cannot_blank_it(client, auth):
     assert bid["phone"] == "506 555 0100"
     for blank in ("", None):
         assert client.put(f"/api/businesses/{bid['id']}", json={"phone": blank}, headers=auth).status_code == 422
-    assert client.put(f"/api/businesses/{bid['id']}", json={"city": "X"}, headers=auth).status_code == 200  # omitted = unchanged
+    assert client.put(f"/api/businesses/{bid['id']}", json={"city": "X"}, headers=auth).status_code == 200
     assert client.put(f"/api/businesses/{bid['id']}", json={"phone": "999"}, headers=auth).json()["phone"] == "999"
 
 
 @pytest.mark.parametrize("phone", [None, "   "])
-def test_database_rejects_missing_phone(phone):
+def test_database_rejects_missing_phone(user, phone):
     with pytest.raises(psycopg2.Error):
         with db.cursor() as cur:
-            cur.execute("INSERT INTO businesses (name, phone) VALUES ('x', %s)", (phone,))
+            cur.execute("INSERT INTO businesses (user_id, name, phone) VALUES ((SELECT id FROM users LIMIT 1), 'x', %s)", (phone,))
 
 
 def test_no_website_filter(client, auth):

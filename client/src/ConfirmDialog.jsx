@@ -2,7 +2,6 @@ import { useEffect } from 'react';
 import { Alert as HeroAlert } from '@heroui/react';
 import { Button } from '@/components/ui/button';
 
-// Alert-style confirmation shown at top centre (same look as Notice). Replaces window.confirm().
 export default function ConfirmDialog({ title, description, confirmLabel = 'Delete', onConfirm, onCancel }) {
   useEffect(() => {
     const onKey = (e) => { if (e.key === 'Escape') onCancel(); };

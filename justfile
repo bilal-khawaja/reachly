@@ -14,6 +14,15 @@ backend:
 
 alias api := backend
 
+# production: build client, migrate, serve everything from FastAPI on $PORT (default 4000)
+build:
+    npm --prefix client ci
+    npm --prefix client run build
+
+start:
+    uv run alembic upgrade head
+    uv run uvicorn main:app --app-dir backend --host 0.0.0.0 --port ${PORT:-4000}
+
 # run backend + client together
 dev:
     npm run dev
@@ -50,6 +59,10 @@ history:
 # create/update login user: just create-user me@example.com
 create-user email:
     uv run python backend/create_user.py {{email}}
+
+# invite someone (prints a one-time sign-up link): just invite friend@example.com
+invite email:
+    uv run python backend/create_invite.py {{email}}
 
 # export businesses + meetings to xlsx (optional path)
 export path="":

@@ -4,7 +4,6 @@ import io
 import re
 from pathlib import Path
 
-# Single source of truth for the import format. The UI preview + template are built from this.
 COLUMNS = [
     {"name": "name", "required": True, "example": "Acme Plumbing", "hint": "Business name"},
     {"name": "phone", "required": True, "example": "506-555-0100", "hint": "Max 40 chars. Keep as text so leading 0s survive"},
@@ -37,7 +36,7 @@ def norm_header(h) -> str:
 def _cell(v):
     if v is None:
         return ""
-    if isinstance(v, float) and v.is_integer():  # xlsx stores 5550100 as 5550100.0
+    if isinstance(v, float) and v.is_integer():
         return str(int(v))
     return str(v).strip()
 
@@ -73,14 +72,12 @@ def read_table(filename: str, data: bytes) -> tuple[list[str], list[tuple[int, d
         raise ImportFormatError(f"File too large (max {MAX_BYTES // 1024 // 1024} MB)")
     grid = _read_csv(data) if ext == ".csv" else _read_xlsx(data)
 
-    # first non-empty row is the header
     start = next((i for i, r in enumerate(grid) if any(r)), None)
     if start is None:
         raise ImportFormatError("File is empty")
     header = [norm_header(h) for h in grid[start]]
     body = grid[start + 1:]
 
-    # drop trailing blank-header columns (Excel often pads them) but reject blank headers that hold data
     width = len(header)
     while width and not header[width - 1] and not any(len(r) >= width and r[width - 1] for r in body):
         width -= 1
@@ -111,6 +108,27 @@ def read_table(filename: str, data: bytes) -> tuple[list[str], list[tuple[int, d
     if len(rows) > MAX_ROWS:
         raise ImportFormatError(f"Too many rows ({len(rows)}). Max {MAX_ROWS} per import")
     return header, rows
+
+
+_PHONE_LIKE = re.compile(r"^[+-]?[\d\s().-]+$")
+
+
+def _safe_cell(v) -> str:
+    """Neutralise spreadsheet formula injection (=, @, +, -, tab, CR) while keeping real phone numbers intact."""
+    s = "" if v is None else str(v)
+    if s and (s[0] in "=@\t\r" or (s[0] in "+-" and not _PHONE_LIKE.match(s))):
+        return "'" + s
+    return s
+
+
+def export_csv(rows: list[dict]) -> str:
+    """Same columns as the import template, so an export can be re-imported."""
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(ALLOWED)
+    for r in rows:
+        w.writerow([_safe_cell(r.get(c)) for c in ALLOWED])
+    return buf.getvalue()
 
 
 def template_csv() -> str:

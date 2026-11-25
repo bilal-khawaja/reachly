@@ -1,8 +1,12 @@
+import os
 from datetime import datetime
+from pathlib import Path
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Response, UploadFile
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from psycopg2.extras import execute_values
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
@@ -14,10 +18,36 @@ from validators import clean_email, clean_phone, clean_website
 Status = Literal["new", "contacted", "replied", "meeting_scheduled", "proposal_sent", "won", "lost"]
 STATUSES = list(Status.__args__)
 
-app = FastAPI(title="Outreach CRM")
-app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173"], allow_methods=["*"], allow_headers=["*"])
+PROD = os.getenv("ENV", "development").lower() == "production"
+DIST = Path(__file__).resolve().parent.parent / "client" / "dist"
 
-# Everything except /api/auth/login requires a valid bearer token.
+app = FastAPI(
+    title="Outreach CRM",
+    docs_url=None if PROD else "/docs",
+    redoc_url=None if PROD else "/redoc",
+    openapi_url=None if PROD else "/openapi.json",
+)
+if not PROD:
+    app.add_middleware(CORSMiddleware, allow_origins=["http://localhost:5173"], allow_methods=["*"], allow_headers=["*"])
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    resp = await call_next(request)
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    if PROD:
+        resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return resp
+
+
+@app.get("/api/health")
+def health():
+    with cursor() as cur:
+        cur.execute("SELECT 1")
+    return {"ok": True}
+
 protected = APIRouter(dependencies=[Depends(current_user)])
 
 
@@ -73,7 +103,7 @@ class BusinessPatch(ContactChecks):
     @field_validator("phone")
     @classmethod
     def _phone(cls, v):
-        return clean_phone(v)  # explicit null / blank is rejected; omit the field to leave it unchanged
+        return clean_phone(v)
 
 
 class BulkDelete(BaseModel):
@@ -96,13 +126,14 @@ def meta():
 
 @protected.get("/api/businesses")
 def list_businesses(
+    user: dict = Depends(current_user),
     status: Optional[str] = None,
     city: Optional[str] = None,
     type: Optional[str] = None,
     q: Optional[str] = None,
     no_website: bool = False,
 ):
-    where, args = [], []
+    where, args = ["b.user_id = %s"], [user["id"]]
     if status:
         where.append("b.status = %s"); args.append(status)
     if city:
@@ -119,7 +150,7 @@ def list_businesses(
             WHERE m.business_id = b.id AND NOT m.done AND m.scheduled_at >= now()) AS next_meeting,
           (SELECT count(*) FROM meetings m WHERE m.business_id = b.id)::int AS meeting_count
         FROM businesses b
-        {'WHERE ' + ' AND '.join(where) if where else ''}
+        WHERE {' AND '.join(where)}
         ORDER BY b.created_at DESC"""
     with cursor() as cur:
         cur.execute(sql, args)
@@ -127,10 +158,11 @@ def list_businesses(
 
 
 @protected.post("/api/businesses", status_code=201)
-def create_business(body: BusinessIn):
+def create_business(body: BusinessIn, user: dict = Depends(current_user)):
     data = {k: blank_to_none(v) for k, v in body.model_dump().items()}
     if not data["name"]:
         raise HTTPException(400, "name required")
+    data["user_id"] = user["id"]
     cols = list(data)
     with cursor() as cur:
         cur.execute(
@@ -141,7 +173,7 @@ def create_business(body: BusinessIn):
 
 
 @protected.put("/api/businesses/{bid}")
-def update_business(bid: int, body: BusinessPatch):
+def update_business(bid: int, body: BusinessPatch, user: dict = Depends(current_user)):
     data = {k: blank_to_none(v) for k, v in body.model_dump(exclude_unset=True).items()}
     if not data:
         raise HTTPException(400, "nothing to update")
@@ -149,8 +181,8 @@ def update_business(bid: int, body: BusinessPatch):
         raise HTTPException(400, "name required")
     with cursor() as cur:
         cur.execute(
-            f"UPDATE businesses SET {','.join(f'{k}=%s' for k in data)}, updated_at=now() WHERE id=%s RETURNING *",
-            [*data.values(), bid],
+            f"UPDATE businesses SET {','.join(f'{k}=%s' for k in data)}, updated_at=now() WHERE id=%s AND user_id=%s RETURNING *",
+            [*data.values(), bid, user["id"]],
         )
         row = cur.fetchone()
     if not row:
@@ -159,27 +191,39 @@ def update_business(bid: int, body: BusinessPatch):
 
 
 @protected.post("/api/businesses/bulk-delete")
-def bulk_delete_businesses(body: BulkDelete):
+def bulk_delete_businesses(body: BulkDelete, user: dict = Depends(current_user)):
     with cursor() as cur:
-        cur.execute("DELETE FROM businesses WHERE id = ANY(%s)", (body.ids,))
+        cur.execute("DELETE FROM businesses WHERE id = ANY(%s) AND user_id = %s", (body.ids, user["id"]))
         return {"deleted": cur.rowcount}
 
 
 @protected.delete("/api/businesses/{bid}", status_code=204)
-def delete_business(bid: int):
+def delete_business(bid: int, user: dict = Depends(current_user)):
     with cursor() as cur:
-        cur.execute("DELETE FROM businesses WHERE id=%s", (bid,))
+        cur.execute("DELETE FROM businesses WHERE id=%s AND user_id=%s", (bid, user["id"]))
     return Response(status_code=204)
 
 
-def _load_import(file: UploadFile):
+@protected.get("/api/export")
+def export_businesses(user: dict = Depends(current_user)):
+    with cursor() as cur:
+        cur.execute("SELECT * FROM businesses WHERE user_id=%s ORDER BY created_at DESC", (user["id"],))
+        rows = cur.fetchall()
+    return Response(
+        "﻿" + importer.export_csv(rows),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="leads-{datetime.now():%Y-%m-%d}.csv"'},
+    )
+
+
+def _load_import(file: UploadFile, user_id: int):
     """Parse + validate an uploaded file. Bad header -> 400; bad rows are reported, not raised."""
     try:
         _, raw_rows = importer.read_table(file.filename, file.file.read(importer.MAX_BYTES + 1))
     except importer.ImportFormatError as e:
         raise HTTPException(400, str(e))
     with cursor() as cur:
-        cur.execute("SELECT lower(name) AS n, phone FROM businesses")
+        cur.execute("SELECT lower(name) AS n, phone FROM businesses WHERE user_id=%s", (user_id,))
         seen = {(r["n"], r["phone"]) for r in cur.fetchall()}
 
     out = []
@@ -219,8 +263,8 @@ def import_template():
 
 
 @protected.post("/api/import/preview")
-def import_preview(file: UploadFile):
-    rows = _load_import(file)
+def import_preview(file: UploadFile, user: dict = Depends(current_user)):
+    rows = _load_import(file, user["id"])
     bad = [r for r in rows if r["errors"]]
     return {
         "total": len(rows),
@@ -233,10 +277,10 @@ def import_preview(file: UploadFile):
 
 
 @protected.post("/api/import", status_code=201)
-def import_commit(file: UploadFile):
+def import_commit(file: UploadFile, user: dict = Depends(current_user)):
     """Inserts valid, non-duplicate rows; skips the rest. Re-validates server-side."""
-    rows = _load_import(file)
-    good = [r["data"] for r in rows if not r["errors"] and not r["duplicate"]]
+    rows = _load_import(file, user["id"])
+    good = [{**r["data"], "user_id": user["id"]} for r in rows if not r["errors"] and not r["duplicate"]]
     if good:
         cols = list(good[0])
         with cursor() as cur:
@@ -253,19 +297,20 @@ def import_commit(file: UploadFile):
 
 
 @protected.get("/api/meetings")
-def list_meetings():
+def list_meetings(user: dict = Depends(current_user)):
     with cursor() as cur:
         cur.execute(
             "SELECT m.*, b.name AS business_name FROM meetings m "
-            "JOIN businesses b ON b.id = m.business_id ORDER BY m.scheduled_at"
+            "JOIN businesses b ON b.id = m.business_id WHERE b.user_id = %s ORDER BY m.scheduled_at",
+            (user["id"],),
         )
         return cur.fetchall()
 
 
 @protected.post("/api/businesses/{bid}/meetings", status_code=201)
-def add_meeting(bid: int, body: MeetingIn):
+def add_meeting(bid: int, body: MeetingIn, user: dict = Depends(current_user)):
     with cursor() as cur:
-        cur.execute("SELECT 1 FROM businesses WHERE id=%s", (bid,))
+        cur.execute("SELECT 1 FROM businesses WHERE id=%s AND user_id=%s", (bid, user["id"]))
         if not cur.fetchone():
             raise HTTPException(404, "business not found")
         cur.execute(
@@ -282,9 +327,12 @@ def add_meeting(bid: int, body: MeetingIn):
 
 
 @protected.patch("/api/meetings/{mid}")
-def patch_meeting(mid: int, body: MeetingPatch):
+def patch_meeting(mid: int, body: MeetingPatch, user: dict = Depends(current_user)):
     with cursor() as cur:
-        cur.execute("UPDATE meetings SET done=%s WHERE id=%s RETURNING *", (body.done, mid))
+        cur.execute(
+            "UPDATE meetings SET done=%s WHERE id=%s AND business_id IN (SELECT id FROM businesses WHERE user_id=%s) RETURNING *",
+            (body.done, mid, user["id"]),
+        )
         row = cur.fetchone()
     if not row:
         raise HTTPException(404, "not found")
@@ -292,11 +340,27 @@ def patch_meeting(mid: int, body: MeetingPatch):
 
 
 @protected.delete("/api/meetings/{mid}", status_code=204)
-def delete_meeting(mid: int):
+def delete_meeting(mid: int, user: dict = Depends(current_user)):
     with cursor() as cur:
-        cur.execute("DELETE FROM meetings WHERE id=%s", (mid,))
+        cur.execute(
+            "DELETE FROM meetings WHERE id=%s AND business_id IN (SELECT id FROM businesses WHERE user_id=%s)",
+            (mid, user["id"]),
+        )
     return Response(status_code=204)
 
 
 app.include_router(auth_router)
 app.include_router(protected)
+
+
+if (DIST / "index.html").exists():
+    app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
+
+    @app.get("/{path:path}", include_in_schema=False)
+    def spa(path: str):
+        if path.startswith("api/"):
+            raise HTTPException(404, "not found")
+        file = (DIST / path).resolve()
+        if path and file.is_file() and DIST.resolve() in file.parents:
+            return FileResponse(file)
+        return FileResponse(DIST / "index.html")

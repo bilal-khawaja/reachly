@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Form, TextField, Label, Input, FieldError } from '@heroui/react';
-import { api, setToken } from './api.js';
+import { api } from './api.js';
+import { enterGuest } from './guest.js';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import GridBackground from '@/components/GridBackground';
@@ -10,15 +11,23 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const inputClass = 'blue-glow w-full border border-input shadow-none';
 
-export default function Login({ onLogin }) {
-  const [mode, setMode] = useState('login');
+export default function Login({ onLogin, onGuest }) {
+  const [token] = useState(() => new URLSearchParams(window.location.search).get('invite'));
+  const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteState, setInviteState] = useState(token ? 'checking' : 'none');
   const [errors, setErrors] = useState({});
   const [formErr, setFormErr] = useState('');
   const [busy, setBusy] = useState(false);
-  const signup = mode === 'signup';
+  const signup = inviteState === 'ok';
 
-  function switchMode() {
-    setMode(signup ? 'login' : 'signup');
+  useEffect(() => {
+    if (!token) return;
+    api.inviteInfo(token).then((r) => { setInviteEmail(r.email); setInviteState('ok'); }).catch(() => setInviteState('bad'));
+  }, [token]);
+
+  function leaveInvite() {
+    window.history.replaceState(null, '', window.location.pathname);
+    setInviteState('none');
     setErrors({});
     setFormErr('');
   }
@@ -26,7 +35,7 @@ export default function Login({ onLogin }) {
   async function submit(e) {
     e.preventDefault();
     const data = Object.fromEntries(new FormData(e.currentTarget));
-    const email = String(data.email).trim();
+    const email = signup ? inviteEmail : String(data.email).trim();
     const password = String(data.password);
     if (signup && password !== data.confirm) {
       setErrors({ confirm: 'Passwords do not match.' });
@@ -36,13 +45,11 @@ export default function Login({ onLogin }) {
     setFormErr('');
     setBusy(true);
     try {
-      const { access_token } = signup ? await api.signup(email, password) : await api.login(email, password);
-      setToken(access_token);
+      await (signup ? api.signup(token, password) : api.login(email, password));
+      window.history.replaceState(null, '', window.location.pathname);
       onLogin();
     } catch (x) {
-      // Show account-specific problems under the field they belong to, anything else on top of the form.
-      if (signup && /already exists/i.test(x.message)) setErrors({ email: x.message });
-      else if (signup && /password/i.test(x.message)) setErrors({ password: x.message });
+      if (signup && /password/i.test(x.message)) setErrors({ password: x.message });
       else setFormErr(x.message);
     } finally { setBusy(false); }
   }
@@ -56,18 +63,27 @@ export default function Login({ onLogin }) {
         <Form onSubmit={submit} validationErrors={errors} className="grid gap-4">
           <CardHeader>
             <CardTitle className="text-3xl font-semibold tracking-tight" style={{ fontFamily: "'Geist Brand', sans-serif" }}>Reachly</CardTitle>
-            <CardDescription>{signup ? 'Create an account to get started.' : 'Log in to manage your clients.'}</CardDescription>
+            <CardDescription>{signup ? 'You are invited. Choose a password to create your account.' : 'Log in to manage your clients.'}</CardDescription>
           </CardHeader>
           <CardContent className="grid gap-4">
+            {inviteState === 'checking' && <p className="text-sm text-muted-foreground">Checking your invite…</p>}
+            {inviteState === 'bad' && <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">This invite link is invalid, already used, or expired. Ask for a new one, or log in below.</div>}
             {formErr && <div role="alert" className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">{formErr}</div>}
-            <TextField
-              name="email" type="email" isRequired autoFocus fullWidth
-              validate={(v) => (EMAIL_RE.test(v.trim()) ? null : 'Enter a valid email address.')}
-            >
-              <Label>Email</Label>
-              <Input className={inputClass} placeholder="you@example.com" autoComplete="email" />
-              <FieldError />
-            </TextField>
+            {signup ? (
+              <TextField name="email" type="email" fullWidth isReadOnly value={inviteEmail}>
+                <Label>Email</Label>
+                <Input className={inputClass} autoComplete="email" />
+              </TextField>
+            ) : (
+              <TextField
+                name="email" type="email" isRequired autoFocus fullWidth
+                validate={(v) => (EMAIL_RE.test(v.trim()) ? null : 'Enter a valid email address.')}
+              >
+                <Label>Email</Label>
+                <Input className={inputClass} placeholder="you@example.com" autoComplete="email" />
+                <FieldError />
+              </TextField>
+            )}
             <TextField
               name="password" type="password" isRequired fullWidth
               validate={(v) => (signup && v.length < 8 ? 'Use at least 8 characters.' : null)}
@@ -85,13 +101,20 @@ export default function Login({ onLogin }) {
             )}
           </CardContent>
           <CardFooter className="grid gap-3">
-            <Button type="submit" className="w-full" disabled={busy}>{signup ? 'Sign up' : 'Log in'}</Button>
-            <p className="text-center text-sm text-muted-foreground">
-              {signup ? 'Already have an account?' : 'No account yet?'}{' '}
-              <button type="button" onClick={switchMode} className="font-medium text-foreground underline-offset-4 hover:underline">
-                {signup ? 'Log in' : 'Sign up'}
-              </button>
-            </p>
+            <Button type="submit" className="w-full" disabled={busy || inviteState === 'checking'}>{signup ? 'Create account' : 'Log in'}</Button>
+            {(signup || inviteState === 'bad') ? (
+              <p className="text-center text-sm text-muted-foreground">
+                Already have an account?{' '}
+                <button type="button" onClick={leaveInvite} className="font-medium text-foreground underline-offset-4 hover:underline">Log in</button>
+              </p>
+            ) : (
+              <p className="text-center text-sm text-muted-foreground">Access is by invitation only.</p>
+            )}
+            {!signup && inviteState !== 'checking' && (
+              <Button type="button" variant="outline" className="w-full" onClick={() => { enterGuest(); onGuest(); }}>
+                Try it without an account
+              </Button>
+            )}
           </CardFooter>
         </Form>
       </Card>

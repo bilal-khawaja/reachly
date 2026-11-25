@@ -13,7 +13,7 @@ import psycopg2
 
 root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(root / "backend"))
-from db import database_url  # loads .env
+from db import database_url
 
 out = Path(sys.argv[1]) if len(sys.argv) > 1 else root / "exports" / f"clients_{datetime.now():%Y%m%d_%H%M}.xlsx"
 out.parent.mkdir(parents=True, exist_ok=True)
@@ -41,7 +41,6 @@ meetings = pd.read_sql(
 )
 conn.close()
 
-# Excel can't store tz-aware datetimes.
 for df in (businesses, meetings):
     for col in df.columns:
         if pd.api.types.is_datetime64_any_dtype(df[col]):

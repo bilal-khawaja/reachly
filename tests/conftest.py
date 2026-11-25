@@ -8,7 +8,6 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "backend"))
 
-# Point everything at a dedicated test DB before app modules are imported.
 from dotenv import load_dotenv  # noqa: E402
 
 load_dotenv(ROOT / ".env")
@@ -41,8 +40,10 @@ def test_database():
 
 @pytest.fixture(autouse=True)
 def clean_tables():
+    import ratelimit
+    ratelimit.reset()
     with db.cursor() as cur:
-        cur.execute("TRUNCATE meetings, businesses, users RESTART IDENTITY CASCADE")
+        cur.execute("TRUNCATE meetings, businesses, invites, users RESTART IDENTITY CASCADE")
     yield
 
 
@@ -64,4 +65,5 @@ def user():
 @pytest.fixture
 def auth(client, user):
     r = client.post("/api/auth/login", json=user)
-    return {"Authorization": f"Bearer {r.json()['access_token']}"}
+    client.cookies.clear()
+    return {"Authorization": f"Bearer {r.cookies['crm_session']}"}

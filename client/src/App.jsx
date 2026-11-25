@@ -1,5 +1,6 @@
-import { useEffect, useState, useCallback } from 'react';
-import { api, STATUSES, label, getToken, setToken } from './api.js';
+import { useEffect, useState, useCallback, useDeferredValue, memo } from 'react';
+import { api, STATUSES, label } from './api.js';
+import { guestHasData, isGuest, leaveGuest } from './guest.js';
 import BusinessForm from './BusinessForm.jsx';
 import MeetingDialog from './MeetingDialog.jsx';
 import ImportDialog from './ImportDialog.jsx';
@@ -11,7 +12,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { NavigationMenu, NavigationMenuItem, NavigationMenuLink, NavigationMenuList, navigationMenuTriggerStyle } from '@/components/ui/navigation-menu';
 import { Checkbox } from '@/components/ui/checkbox';
-import { LogOut, Pencil, Trash2 } from 'lucide-react';
+import { ChevronDown, Download, LogOut, Pencil, Trash2 } from 'lucide-react';
 import ConfirmDialog from './ConfirmDialog.jsx';
 import Notice from './Notice.jsx';
 import ThemeToggle from './ThemeToggle.jsx';
@@ -21,8 +22,23 @@ import { cn } from '@/lib/utils';
 const STATUS_OPTIONS = STATUSES.map((s) => ({ value: s, label: label(s) }));
 const fmt = (d) => (d ? new Date(d).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '—');
 
-// Stop diagonal ("circular") scrolling in table viewports: when a wheel/trackpad event moves both axes,
-// keep only the dominant one. Single-axis events are left to the browser (native smooth scrolling).
+const StatusCell = memo(function StatusCell({ id, status, onChange }) {
+  const [active, setActive] = useState(false);
+  if (active) {
+    return (
+      <SelectCombo options={STATUS_OPTIONS} value={status} placeholder="Status" className="[&_input]:text-center"
+        defaultOpen onOpenChange={(o) => { if (!o) setActive(false); }} onChange={(v) => { setActive(false); onChange(id, v); }} />
+    );
+  }
+  return (
+    <button type="button" onClick={() => setActive(true)} aria-label="Change status"
+      className="flex h-8 w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-input bg-transparent px-2.5 text-sm capitalize transition-colors hover:border-ring dark:bg-input/30">
+      <span className="flex-1 text-center">{label(status)}</span>
+      <ChevronDown className="size-4 text-muted-foreground" aria-hidden />
+    </button>
+  );
+});
+
 function axisLock(el) {
   if (!el || el._axisLock) return;
   el._axisLock = true;
@@ -34,24 +50,27 @@ function axisLock(el) {
     const d = horizontal ? e.deltaX : e.deltaY;
     const pos = horizontal ? vp.scrollLeft : vp.scrollTop;
     const max = horizontal ? vp.scrollWidth - vp.clientWidth : vp.scrollHeight - vp.clientHeight;
-    if (max <= 0 || (d < 0 && pos <= 0) || (d > 0 && pos >= max)) return; // at an edge: let the page handle it
+    if (max <= 0 || (d < 0 && pos <= 0) || (d > 0 && pos >= max)) return;
     e.preventDefault();
     vp.scrollBy({ [horizontal ? 'left' : 'top']: d });
   }, { passive: false });
 }
 
 export default function App() {
-  const [authed, setAuthed] = useState(!!getToken());
+  const [guest, setGuest] = useState(isGuest());
+  const [authed, setAuthed] = useState(guest ? true : null);
   useEffect(() => {
+    if (!guest) api.me().then(() => setAuthed(true)).catch(() => setAuthed(false));
     const out = () => setAuthed(false);
     window.addEventListener('crm-logout', out);
     return () => window.removeEventListener('crm-logout', out);
-  }, []);
-  if (!authed) return <Login onLogin={() => setAuthed(true)} />;
-  return <Crm onLogout={() => { setToken(null); setAuthed(false); }} />;
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  if (authed === null) return <div className="grid min-h-screen place-items-center text-sm text-muted-foreground">Loading…</div>;
+  if (!authed) return <Login onLogin={() => setAuthed(true)} onGuest={() => { setGuest(true); setAuthed(true); }} />;
+  return <Crm guest={guest} onLogout={() => { if (guest) { leaveGuest(); setGuest(false); } else api.logout().catch(() => {}); setAuthed(false); }} />;
 }
 
-function Crm({ onLogout }) {
+function Crm({ onLogout, guest }) {
   const [rows, setRows] = useState([]);
   const [meetings, setMeetings] = useState([]);
   const [filters, setFilters] = useState({ city: '', type: '', q: '', no_website: '' });
@@ -62,7 +81,6 @@ function Crm({ onLogout }) {
   const [importing, setImporting] = useState(false);
   const [notice, setNotice] = useState(null);
   const [confirming, setConfirming] = useState(null);
-  // Fade edges for the leads rows only (header stays crisp): top fade sits just below the sticky header.
   const [fade, setFade] = useState({ top: false, bottom: false });
   const onRowsScroll = useCallback((e) => {
     const el = e.currentTarget;
@@ -87,8 +105,12 @@ function Crm({ onLogout }) {
   }, [filters, setError]);
 
   useEffect(() => { load(); }, [load]);
+  const changeStatus = useCallback(async (id, v) => {
+    try { await api.update(id, { status: v }); load(); } catch (e) { setError(e.message); }
+  }, [load, setError]);
 
-  const visible = statusTab === 'all' ? rows : rows.filter((r) => r.status === statusTab);
+  const deferredTab = useDeferredValue(statusTab);
+  const visible = deferredTab === 'all' ? rows : rows.filter((r) => r.status === deferredTab);
   const selectedVisible = visible.filter((r) => selected.has(r.id));
   const allSelected = visible.length > 0 && selectedVisible.length === visible.length;
   const toggleOne = (id, on) => setSelected((s) => { const n = new Set(s); on ? n.add(id) : n.delete(id); return n; });
@@ -117,8 +139,22 @@ function Crm({ onLogout }) {
       },
     });
   }
+  useEffect(() => {
+    if (!guest) return;
+    const warn = (e) => { if (guestHasData()) { e.preventDefault(); e.returnValue = ''; } };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [guest]);
+  function logout() {
+    if (!guest || !guestHasData()) return onLogout();
+    setConfirming({
+      title: 'Leave the trial?',
+      description: 'Your trial data is not saved anywhere and will be deleted. Export it first if you want to keep it.',
+      run: onLogout,
+    });
+  }
   const setF = (k) => (e) => setFilters({ ...filters, [k]: e.target.value });
-  const input = 'h-9 rounded-lg border border-input bg-background px-3 text-sm outline-none blue-glow';
+  const input = 'glass-field h-9 rounded-lg px-3 text-sm outline-none blue-glow';
   const navLink = (id) => cn(navigationMenuTriggerStyle(), 'cursor-pointer !px-0 hover:!bg-transparent focus:!bg-transparent data-active:!bg-transparent focus-visible:!ring-0', page === id ? 'text-foreground' : 'text-muted-foreground hover:text-foreground');
 
   return (
@@ -143,14 +179,23 @@ function Crm({ onLogout }) {
             </NavigationMenuList>
           </NavigationMenu>
           <div className="flex-1" />
-          <Button variant="outline" onClick={() => setImporting(true)}>Import</Button>
-          <Button onClick={() => setEditing({})}>+ Add business</Button>
-          <Button variant="outline" size="icon" onClick={onLogout} aria-label="Log out" title="Log out"><LogOut /></Button>
+          <Button
+            className="shadow-[0_6px_14px_-4px_rgb(15_23_42/0.45),0_2px_4px_rgb(15_23_42/0.2)] transition-[transform,box-shadow] duration-200 hover:-translate-y-0.5 hover:shadow-[0_10px_20px_-4px_rgb(15_23_42/0.5),0_3px_6px_rgb(15_23_42/0.2)] active:translate-y-0 active:shadow-[0_2px_4px_rgb(15_23_42/0.3)] dark:shadow-[0_6px_16px_-4px_rgb(0_0_0/0.7)] dark:hover:shadow-[0_10px_22px_-4px_rgb(0_0_0/0.8)] dark:active:shadow-[0_2px_4px_rgb(0_0_0/0.6)]"
+            onClick={() => setEditing({})}>+ Add business</Button>
+          <Button variant="outline" size="icon" onClick={logout} aria-label={guest ? 'Exit trial' : 'Log out'} title={guest ? 'Exit trial' : 'Log out'}><LogOut /></Button>
           <ThemeToggle />
         </div>
       </header>
 
       <main className="mx-auto max-w-6xl space-y-4 px-4 pb-6 pt-12">
+        {guest && (
+          <div role="status" className="mx-auto flex max-w-3xl flex-wrap items-center justify-center gap-x-3 gap-y-1 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-300">
+            <span><b>Trial mode.</b> Your data stays in this tab and is never saved. Export before you leave.</span>
+            <button type="button" onClick={() => api.exportLeads().catch((e) => notify('error', e.message))} className="inline-flex items-center gap-1 font-medium underline-offset-4 hover:underline">
+              <Download className="size-3.5" /> Export CSV
+            </button>
+          </div>
+        )}
 
         {page === 'clients' && (
           <>
@@ -169,13 +214,15 @@ function Crm({ onLogout }) {
               <input className={cn(input, 'w-56')} placeholder="Search name / phone" value={filters.q} onChange={setF('q')} />
               <input className={cn(input, 'w-36')} placeholder="City" value={filters.city} onChange={setF('city')} />
               <input className={cn(input, 'w-40')} placeholder="Business type" value={filters.type} onChange={setF('type')} />
-              <Button variant={filters.no_website ? 'secondary' : 'outline'} className="h-9" aria-pressed={!!filters.no_website}
+              <Button variant={filters.no_website ? 'secondary' : 'outline'} className="glass-field h-9" aria-pressed={!!filters.no_website}
                 onClick={() => setFilters({ ...filters, no_website: filters.no_website ? '' : 'true' })}>
                 No website
               </Button>
-              <Button variant={selectMode ? 'secondary' : 'outline'} className="h-9" onClick={() => (selectMode ? exitSelect() : setSelectMode(true))}>
+              <Button variant={selectMode ? 'secondary' : 'outline'} className="glass-field h-9" aria-pressed={selectMode} onClick={() => (selectMode ? exitSelect() : setSelectMode(true))}>
                 {selectMode ? 'Cancel' : 'Select'}
               </Button>
+              <Button variant="outline" className="glass-field h-9" onClick={() => setImporting(true)}>Import</Button>
+              <Button variant="outline" className="glass-field h-9" onClick={() => api.exportLeads().catch((e) => notify('error', e.message))}>Export</Button>
               {selectMode && selectedVisible.length > 0 && (
                 <div className="flex items-center gap-1 pl-1">
                   <span className="text-sm text-muted-foreground">{selectedVisible.length} selected</span>
@@ -219,8 +266,7 @@ function Crm({ onLogout }) {
                       <TableCell className="capitalize">{r.channel}</TableCell>
                       <TableCell>
                         <div className="w-44">
-                          <SelectCombo options={STATUS_OPTIONS} value={r.status} placeholder="Status" className="[&_input]:text-center"
-                            onChange={async (v) => { try { await api.update(r.id, { status: v }); load(); } catch (e) { setError(e.message); } }} />
+                          <StatusCell id={r.id} status={r.status} onChange={changeStatus} />
                         </div>
                       </TableCell>
                       <TableCell className={`whitespace-nowrap text-muted-foreground${r.next_meeting ? '' : ' text-center'}`}>{fmt(r.next_meeting)}</TableCell>

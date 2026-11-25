@@ -1,11 +1,10 @@
 import { Combobox, ComboboxContent, ComboboxEmpty, ComboboxInput, ComboboxItem, ComboboxList, useComboboxAnchor } from '@/components/ui/combobox';
 
-// Pick-one combobox. options: [{ value, label }]
-export function SelectCombo({ options, value, onChange, placeholder, className }) {
+export function SelectCombo({ options, value, onChange, placeholder, className, defaultOpen, onOpenChange }) {
   const anchor = useComboboxAnchor();
   const selected = options.find((o) => o.value === value) ?? null;
   return (
-    <Combobox key={value} items={options} value={selected} onValueChange={(o) => o && onChange(o.value)}
+    <Combobox key={value} items={options} value={selected} defaultOpen={defaultOpen} onOpenChange={onOpenChange} onValueChange={(o) => o && onChange(o.value)}
       itemToStringLabel={(o) => o.label} isItemEqualToValue={(a, b) => a.value === b.value}>
       <div ref={anchor}><ComboboxInput placeholder={placeholder} className={`w-full capitalize ${className ?? ''}`} /></div>
       <ComboboxContent anchor={anchor} className="w-72! min-w-72!">
@@ -18,7 +17,6 @@ export function SelectCombo({ options, value, onChange, placeholder, className }
   );
 }
 
-// Suggestion combobox: free text allowed, suggestions from `options` (strings).
 export function SuggestCombo({ options, value, onChange, placeholder }) {
   const anchor = useComboboxAnchor();
   return (

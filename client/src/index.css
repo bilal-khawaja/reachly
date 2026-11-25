@@ -137,7 +137,6 @@
     @apply font-sans overflow-hidden;
     }
 }
-/* Fields: neutral border on hover/focus (no ring, no shadow) */
 :root { --blue: #0485F7; }
 .blue-glow { transition: border-color 150ms ease; }
 .blue-glow:hover:not([data-invalid="true"]):not([aria-invalid="true"]),
@@ -152,18 +151,15 @@
 .blue-glow[data-invalid="true"], .blue-glow[aria-invalid="true"] { box-shadow: none !important; border-color: var(--destructive) !important; }
 .blue-glow.border[data-invalid="true"] { border-color: var(--destructive) !important; }
 
-/* HeroUI calendar: blue selected day only */
 .calendar { --accent: #0485F7; --accent-foreground: #ffffff; }
 .calendar__cell[data-selected="true"] { background-color: var(--blue) !important; color: #fff !important; }
 .calendar__cell[data-focus-visible="true"] { outline: none; }
 
-/* Instant light/dark switch: kill all transitions while the theme class flips (theme.js). */
 html.theme-switching, html.theme-switching *, html.theme-switching *::before, html.theme-switching *::after {
   transition: none !important;
   animation-duration: 0s !important;
 }
 
-/* Liquid-glass navbar: frosted gradient pane, bright rim, specular sheen. */
 .glass-nav {
   isolation: isolate;
   overflow: hidden;
@@ -202,3 +198,22 @@ html.theme-switching, html.theme-switching *, html.theme-switching *::before, ht
     radial-gradient(120% 140% at 8% -40%, rgb(255 255 255 / 0.08), transparent 55%),
     radial-gradient(80% 120% at 100% 130%, rgb(4 133 247 / 0.12), transparent 60%);
 }
+
+.glass-field {
+  background: linear-gradient(135deg, rgb(255 255 255 / 0.55), rgb(255 255 255 / 0.25)) !important;
+  -webkit-backdrop-filter: blur(8px) saturate(120%);
+  backdrop-filter: blur(8px) saturate(120%);
+  border: 1px solid rgb(15 23 42 / 0.1) !important;
+  box-shadow: 0 1px 2px rgb(15 23 42 / 0.06), inset 0 1px 0 rgb(255 255 255 / 0.7);
+  transition: border-color 150ms ease, background-color 150ms ease, box-shadow 150ms ease;
+}
+.glass-field:hover { box-shadow: 0 2px 6px rgb(40 60 130 / 0.1), inset 0 1px 0 rgb(255 255 255 / 0.8); }
+.glass-field[aria-pressed="true"] { background: linear-gradient(135deg, rgb(4 133 247 / 0.22), rgb(4 133 247 / 0.1)) !important; border-color: rgb(4 133 247 / 0.4) !important; }
+.dark .glass-field {
+  background: linear-gradient(135deg, rgb(255 255 255 / 0.1), rgb(255 255 255 / 0.04)) !important;
+  border-color: rgb(255 255 255 / 0.16) !important;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.3), inset 0 1px 0 rgb(255 255 255 / 0.12);
+}
+.dark .glass-field:hover { box-shadow: 0 2px 6px rgb(0 0 0 / 0.4), inset 0 1px 0 rgb(255 255 255 / 0.18); }
+.dark .glass-field[aria-pressed="true"] { background: linear-gradient(135deg, rgb(4 133 247 / 0.3), rgb(4 133 247 / 0.12)) !important; border-color: rgb(4 133 247 / 0.5) !important; }
+.glass-field::placeholder { color: var(--muted-foreground); }

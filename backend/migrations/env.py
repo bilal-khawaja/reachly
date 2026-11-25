@@ -11,7 +11,6 @@ if config.config_file_name:
 
 url = database_url().replace("postgresql://", "postgresql+psycopg2://", 1)
 
-# Schema is managed with hand-written migrations (no ORM models).
 target_metadata = None
 
 

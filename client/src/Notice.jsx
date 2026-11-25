@@ -3,7 +3,6 @@ import { AlertCircle, CheckCircle2, X } from 'lucide-react';
 import { Alert as HeroAlert, CloseButton } from '@heroui/react';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 
-// Transient alert shown at top centre. notice: { type: 'success' | 'error' | 'warning' | 'deleted', title, description } | null
 export default function Notice({ notice, onClose }) {
   useEffect(() => {
     if (!notice) return;

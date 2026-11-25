@@ -22,7 +22,6 @@ export function useTheme() {
 
   useEffect(() => { applyTheme(theme); }, [theme]);
 
-  // Follow the OS setting until the user picks a theme explicitly.
   useEffect(() => {
     const m = mql();
     const onChange = (e) => { if (!stored()) setTheme(e.matches ? 'dark' : 'light'); };
@@ -31,14 +30,13 @@ export function useTheme() {
   }, []);
 
   const toggle = useCallback(() => {
-    // Suppress all transitions during the flip so the switch is instant.
     const root = document.documentElement;
     root.classList.add('theme-switching');
     clearTimeout(fadeTimer);
     fadeTimer = setTimeout(() => root.classList.remove('theme-switching'), 80);
     setTheme((t) => {
       const next = t === 'dark' ? 'light' : 'dark';
-      try { localStorage.setItem(KEY, next); } catch { /* ignore */ }
+      try { localStorage.setItem(KEY, next); } catch {}
       return next;
     });
   }, []);

@@ -36,7 +36,6 @@ def test_spec_and_template(client, auth):
     t = client.get("/api/import/template", headers=auth)
     assert t.headers["content-type"].startswith("text/csv")
     assert t.text.splitlines()[0].startswith("name,phone")
-    # template must itself import cleanly
     assert up(client, auth, t.text, path="/api/import/preview").json()["invalid"] == 0
 
 

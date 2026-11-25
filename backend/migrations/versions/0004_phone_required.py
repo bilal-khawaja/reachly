@@ -13,7 +13,6 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Fails loudly if existing rows have no phone: fix or delete them first.
     op.execute("ALTER TABLE businesses ALTER COLUMN phone SET NOT NULL")
     op.execute("ALTER TABLE businesses ADD CONSTRAINT businesses_phone_not_blank CHECK (btrim(phone) <> '')")
 
